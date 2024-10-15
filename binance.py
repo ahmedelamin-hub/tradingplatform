@@ -8,15 +8,6 @@ import pytz
 from binance.client import Client
 from binance.enums import SIDE_BUY, SIDE_SELL, ORDER_TYPE_MARKET
 import time
-import alpaca_trade_api as tradeapi  # Alpaca SDK
-
-# Alpaca API Keys
-APCA_API_BASE_URL = "https://paper-api.alpaca.markets/v2"  # Paper trading for testing
-APCA_API_KEY_ID = "PK77AYZXRSTU37E27EK3"
-APCA_API_SECRET_KEY = "8DC7dFVtJwRNJacM6seYyvsrYinftFtpJgxv1Fa1"
-
-# Initialize Alpaca client
-alpaca = tradeapi.REST(APCA_API_KEY_ID, APCA_API_SECRET_KEY, APCA_API_BASE_URL, api_version='v2')
 
 # API Key for Binance Futures Testnet
 API_KEY = "70d56a2c1a1f5fc16aa0077b1eb40dbb1f87d8451afb7483b9292f79c6363f18"
@@ -33,35 +24,7 @@ client.timestamp_offset = server_time['serverTime'] - int(time.time() * 1000)
 def convert_to_timezone_aware(date_obj):
     return datetime.combine(date_obj, datetime.min.time()).replace(tzinfo=pytz.UTC)
 
-# Function to fetch Alpaca historical data
-def load_data_alpaca(symbol, start, end):
-    try:
-        bars = alpaca.get_bars(symbol, "1Day", start=start.isoformat(), end=end.isoformat())
-        data = pd.DataFrame({
-            'timestamp': [bar.t for bar in bars],
-            'open': [bar.o for bar in bars],
-            'high': [bar.h for bar in bars],
-            'low': [bar.l for bar in bars],
-            'close': [bar.c for bar in bars],
-            'volume': [bar.v for bar in bars]
-        })
-        data['timestamp'] = pd.to_datetime(data['timestamp'])
-        data.set_index('timestamp', inplace=True)
-        return data['close']
-    except Exception as e:
-        st.error(f"Error fetching Alpaca data: {e}")
-        return pd.Series()
-
-# Function to fetch live account balance for Alpaca
-def get_alpaca_balance():
-    try:
-        account = alpaca.get_account()
-        return float(account.cash)
-    except Exception as e:
-        st.error(f"Error fetching Alpaca balance: {e}")
-        return None
-
-# Function to fetch Binance live account balance
+# Function to fetch live account balance
 def get_balance():
     try:
         balance = client.futures_account_balance()
@@ -72,7 +35,7 @@ def get_balance():
         st.error(f"Error fetching balance: {e}")
         return None
 
-# Function to fetch detailed open positions for Binance
+# Function to fetch detailed open positions with relevant fields
 def get_open_positions():
     try:
         positions = client.futures_position_information()
@@ -96,14 +59,38 @@ def get_open_positions():
                     'Break Even Price': pos['entryPrice'],  # Adjust this based on fees if necessary
                     'Mark Price': mark_price,
                     'Liq. Price': float(pos['liquidationPrice']),
-                    'Margin Type': pos['marginType'],
-                    'Margin': margin_balance,
-                    'PNL(ROI %)': f"{pnl:.2f} USDT ({roi:.2f}%)"
+                    'Margin Type': pos['marginType'],  # Keep marginType as string (e.g., 'cross' or 'isolated')
+                    'Margin': margin_balance,  # You may want to adjust based on the position size
+                    'PNL(ROI %)': f"{pnl:.2f} USDT ({roi:.2f}%)",
+                    'Reverse': '',  # Add a button for reversing position (if needed)
+                    'TP/SL for Position': '',  # Display this when you implement TP/SL settings
+                    'TP/SL': '',  # Display current TP/SL values (if applicable)
                 })
         return open_positions
     except Exception as e:
         st.error(f"Error fetching positions: {e}")
         return []
+
+# Function to close an individual position
+def close_position(symbol, size, side):
+    try:
+        client.futures_create_order(symbol=symbol, side=side, type=ORDER_TYPE_MARKET, quantity=size)
+        st.success(f"Closed position for {symbol}")
+    except Exception as e:
+        st.error(f"Error closing position for {symbol}: {e}")
+
+# Function to close all open positions
+def close_all_positions():
+    try:
+        positions = get_open_positions()
+        for pos in positions:
+            symbol = pos['Symbol']
+            qty = abs(float(pos['Size']))
+            side = SIDE_SELL if float(pos['Size']) > 0 else SIDE_BUY
+            client.futures_create_order(symbol=symbol, side=side, type=ORDER_TYPE_MARKET, quantity=qty)
+        st.success("All positions closed!")
+    except Exception as e:
+        st.error(f"Error closing positions: {e}")
 
 # Function for Binance Live Trading
 def run_live_strategy_binance(symbol, margin, allocated_margin, short_ema_period, long_ema_period, side):
@@ -161,23 +148,68 @@ def run_live_strategy_binance(symbol, margin, allocated_margin, short_ema_period
 # Streamlit interface
 st.set_page_config(page_title='Vision', layout='wide', page_icon="📈", initial_sidebar_state="expanded")
 
+# Inject CSS for the custom color theme and the dashboard button
+st.markdown(
+    """
+    <style>
+    .css-18e3th9 {
+        background-color: #344767;
+    }
+    .css-1d391kg {
+        color: white;
+    }
+    .button {
+        background-color: #4CAF50;
+        border: none;
+        color: white;
+        padding: 10px 24px;
+        text-align: center;
+        font-size: 16px;
+        margin: 4px 2px;
+        cursor: pointer;
+        width: 100%;
+    }
+    .button:hover {
+        background-color: #45a049;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+
 # Sidebar for inputs
 st.sidebar.title("Vision Trading")
+
+# Professional Dashboard Button
+st.sidebar.markdown(
+    """
+    <a href="http://localhost:3000/dashboard" target="_self">
+    <button class="button">Go to Dashboard</button>
+    </a>
+    """, unsafe_allow_html=True
+)
 
 st.sidebar.header("Choose Exchange")
 source = st.sidebar.selectbox("Choose Exchange", ["Alpaca", "Binance Futures"])
 
 if source == "Alpaca":
-    symbol = st.sidebar.text_input("Enter Alpaca symbol (e.g., 'AAPL')", value="AAPL")
-    start_date = st.sidebar.date_input("Start Date", value=pd.to_datetime("2020-01-01"))
-    end_date = st.sidebar.date_input("End Date", value=pd.to_datetime("2024-01-01"))
+    symbol = st.sidebar.text_input("Enter the Alpaca symbol (e.g., 'AAPL')", value="HDFCBANK.NS")
+    start_date = st.sidebar.date_input("Start Date", value=pd.to_datetime("2010-01-01"), max_value=pd.to_datetime("2024-01-01"))
+    end_date = st.sidebar.date_input("End Date", value=pd.to_datetime("2024-01-01"), max_value=pd.to_datetime("2024-12-31"))
     size = st.sidebar.number_input("Position Size", value=100)  # Input for position size for Alpaca backtesting
-    initial_equity = st.sidebar.number_input("Initial Equity", value=100000)
+    initial_equity = st.sidebar.number_input("Initial Equity", value=100000)  # Only for Alpaca
+    
+    # Parameters only for Alpaca (Yahoo finance under the hood)
+    size_type = st.sidebar.selectbox("Size Type", ["amount", "value", "percent"], index=2)
+    fees = st.sidebar.number_input("Fees (as %)", value=0.12, format="%.4f")
+    direction = st.sidebar.selectbox("Direction", ["longonly", "shortonly", "both"], index=0)
 
 elif source == "Binance Futures":
     symbol = st.sidebar.selectbox("Select Cryptocurrency Pair (Binance Futures)", ["BTCUSDT", "ETHUSDT", "BNBUSDT", "ADAUSDT"])
     margin = st.sidebar.number_input("Select Leverage (Margin)", value=5, min_value=1, max_value=125)
     allocated_margin = st.sidebar.number_input("Amount to Allocate ($)", value=1000)  # Only for Binance Futures
+
+    # Trade Action: Buy or Sell
     trade_action = st.sidebar.radio("Trade Action", ["buy", "sell"])
 
 # Strategies Section
@@ -191,14 +223,20 @@ backtest_clicked = st.sidebar.button("Backtest")
 simulate_clicked = st.sidebar.button("Simulate")
 live_clicked = st.sidebar.button("Run Live Strategy")
 
+# Function to fetch historical data (for Alpaca placeholder, under Yahoo Finance)
+@st.cache_data
+def load_data(symbol, start, end):
+    return vbt.YFData.download(symbol, start=start, end=end).get('Close')
+
 # Main area for results
 if backtest_clicked or simulate_clicked or live_clicked:
+    # Alpaca Backtesting (Yahoo Finance as a placeholder)
     if backtest_clicked and source == "Alpaca":
         start_date_tz = convert_to_timezone_aware(start_date)
         end_date_tz = convert_to_timezone_aware(end_date)
 
-        # Fetch data for backtesting (Alpaca)
-        data = load_data_alpaca(symbol, start_date_tz, end_date_tz)
+        # Fetch data for backtesting (Yahoo Finance)
+        data = load_data(symbol, start_date_tz, end_date_tz)
 
         if data.empty:
             st.error("No data found for the selected symbol and date range.")
@@ -212,39 +250,50 @@ if backtest_clicked or simulate_clicked or live_clicked:
             if entries.sum() == 0 or exits.sum() == 0:
                 st.warning("No trade signals generated. Adjust the strategy parameters.")
             else:
-                portfolio = vbt.Portfolio.from_signals(data, entries, exits)
+                size_value = float(size) if size_type != 'percent' else float(size) / 100.0
+                portfolio = vbt.Portfolio.from_signals(
+                    data, entries, exits, direction=direction, size=size_value,
+                    size_type=size_type, fees=fees / 100, init_cash=initial_equity, freq='1D'
+                )
 
-                # Tabs for backtesting results
-                tab1, tab2, tab3, tab4, tab5 = st.tabs(["Backtesting Stats", "List of Trades", "Equity Curve", "Drawdown", "Portfolio Plot"])
+                # Check if trades were made during backtest
+                if portfolio.trades.records.shape[0] == 0:
+                    st.error("No trades were made during the backtest.")
+                else:
+                    tab1, tab2, tab3, tab4, tab5 = st.tabs(["Backtesting Stats", "List of Trades", "Equity Curve", "Drawdown", "Portfolio Plot"])
 
-                with tab1:
-                    st.markdown("**Backtesting Stats:**")
-                    stats_df = pd.DataFrame(portfolio.stats(), columns=['Value'])
-                    st.dataframe(stats_df, height=800)
+                    with tab1:
+                        st.markdown("**Backtesting Stats:**")
+                        stats_df = pd.DataFrame(portfolio.stats(), columns=['Value'])
+                        st.dataframe(stats_df, height=800)
 
-                with tab2:
-                    st.markdown("**List of Trades:**")
-                    trades_df = portfolio.trades.records_readable
-                    st.dataframe(trades_df.round(2), width=800, height=600)
+                    with tab2:
+                        st.markdown("**List of Trades:**")
+                        trades_df = portfolio.trades.records_readable
+                        st.dataframe(trades_df.round(2), width=800, height=600)
 
-                equity_data = portfolio.value()
-                drawdown_data = portfolio.drawdown() * 100
+                    equity_data = portfolio.value()
+                    drawdown_data = portfolio.drawdown() * 100
 
-                with tab3:
-                    equity_trace = go.Scatter(x=equity_data.index, y=equity_data, mode='lines', name='Equity')
-                    equity_fig = go.Figure(data=[equity_trace])
-                    st.plotly_chart(equity_fig)
+                    with tab3:
+                        equity_trace = go.Scatter(x=equity_data.index, y=equity_data, mode='lines', name='Equity')
+                        equity_fig = go.Figure(data=[equity_trace])
+                        st.plotly_chart(equity_fig)
 
-                with tab4:
-                    drawdown_trace = go.Scatter(x=drawdown_data.index, y=drawdown_data, mode='lines', name='Drawdown', fill='tozeroy')
-                    drawdown_fig = go.Figure(data=[drawdown_trace])
-                    st.plotly_chart(drawdown_fig)
+                    with tab4:
+                        drawdown_trace = go.Scatter(x=drawdown_data.index, y=drawdown_data, mode='lines', name='Drawdown', fill='tozeroy')
+                        drawdown_fig = go.Figure(data=[drawdown_trace])
+                        st.plotly_chart(drawdown_fig)
 
-                with tab5:
-                    st.markdown("**Portfolio Plot:**")
-                    st.plotly_chart(portfolio.plot())
+                    with tab5:
+                        st.markdown("**Portfolio Plot:**")
+                        st.plotly_chart(portfolio.plot())
 
-    # Binance Futures Simulation or Live Trading
+    # Binance Futures Simulation
+    if simulate_clicked and source == "Binance Futures":
+        simulate_binance()
+
+    # Binance Futures Live Trading
     if live_clicked and source == "Binance Futures":
         order_id = run_live_strategy_binance(symbol, margin, allocated_margin, short_ema_period, long_ema_period, trade_action)
 
@@ -261,6 +310,13 @@ if source == "Binance Futures":
     positions = get_open_positions()
     if positions:
         df = pd.DataFrame(positions)
+
+        # Show the relevant columns neatly
+        df = df[['Symbol', 'Size', 'Entry Price', 'Break Even Price', 'Mark Price', 
+                 'Liq. Price', 'Margin Type', 'Margin', 'PNL(ROI %)', 'Reverse', 
+                 'TP/SL for Position', 'TP/SL']]
+
+        # Display in a user-friendly table
         st.table(df)
 
         # Buttons to close each position
@@ -270,10 +326,7 @@ if source == "Binance Futures":
             close_position_button = st.button(f"Close {symbol} position", key=f"{symbol}_{index}")
             if close_position_button:
                 side = SIDE_SELL if float(row['Size']) > 0 else SIDE_BUY
-                client.futures_create_order(symbol=symbol, side=side, type=ORDER_TYPE_MARKET, quantity=size)
-                st.success(f"Closed position for {symbol}")
+                close_position(symbol, size, side)
 
     # Button to close all positions
-    st.button("Close All Positions", on_click=lambda: [client.futures_create_order(
-        symbol=pos['Symbol'], side=SIDE_SELL if float(pos['Size']) > 0 else SIDE_BUY, type=ORDER_TYPE_MARKET, quantity=abs(float(pos['Size']))
-    ) for pos in positions])
+    st.button("Close All Positions", on_click=close_all_positions)
