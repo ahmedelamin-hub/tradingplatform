@@ -6,14 +6,16 @@ import pandas as pd
 def initialize_alpaca_client(api_key, api_secret):
     return tradeapi.REST(api_key, api_secret, base_url="https://paper-api.alpaca.markets", api_version='v2')
 
-# Fetch Alpaca balance
+# Fetch Alpaca balance and PnL
 def fetch_alpaca_balance(client):
     try:
         account = client.get_account()
-        return float(account.cash)
+        balance = float(account.cash)
+        pnl = float(account.unrealized_pl) if hasattr(account, 'unrealized_pl') else 0  # Default PnL to 0 if not available
+        return balance, pnl
     except Exception as e:
         print(f"Error fetching Alpaca balance: {e}")
-        return None
+        return None, None  # Return None for both if there's an error
 
 # Alpaca live strategy
 def run_live_strategy_alpaca(client, symbol, action, dollar_amount):
@@ -24,11 +26,9 @@ def run_live_strategy_alpaca(client, symbol, action, dollar_amount):
             qty=dollar_amount,  # Calculate this based on the price if needed
             side=side,
             type='market',
-            time_in_force='day'
+            time_in_force='day'  # Ensure fractional orders use DAY
         )
         print(f"{action.capitalize()} order placed for {symbol}")
-
-        # Fetch current positions
         return get_open_positions_alpaca(client)
 
     except Exception as e:
@@ -51,7 +51,7 @@ def backtest_alpaca(symbol, start_date, end_date, short_ema_period, long_ema_per
         print(f"Error during Alpaca backtest: {e}")
         return None
 
-# Get open positions for Alpaca
+# Get open positions for Alpaca with PnL
 def get_open_positions_alpaca(client):
     try:
         positions = client.list_positions()
@@ -73,18 +73,24 @@ def get_open_positions_alpaca(client):
         print(f"Error fetching open positions: {e}")
         return None
 
-# Close specific position in Alpaca
+# Close specific position in Alpaca with correct fractional handling
 def close_position_alpaca(client, symbol):
     try:
         position = client.get_position(symbol)
         qty = position.qty
-        side = 'sell' if int(qty) > 0 else 'buy'
+
+        if float(qty) <= 0:
+            print(f"Invalid quantity {qty} for {symbol}.")
+            return
+
+        # Convert qty to string to handle fractional shares properly and use DAY for fractional orders
+        side = 'sell' if float(qty) > 0 else 'buy'
         client.submit_order(
             symbol=symbol,
-            qty=qty,
+            qty=str(float(qty)),  # Ensure qty is a string and supports fractional shares
             side=side,
             type='market',
-            time_in_force='gtc'
+            time_in_force='day'  # Fractional orders must use 'day'
         )
         print(f"Closed position for {symbol}")
     except Exception as e:

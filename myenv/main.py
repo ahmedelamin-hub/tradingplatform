@@ -14,13 +14,15 @@ from my_binance.my_binance import initialize_binance_client, run_live_strategy_b
 # Streamlit setup
 st.set_page_config(page_title='Vision Trading', layout='wide', page_icon="📈", initial_sidebar_state="expanded")
 
-# Initialize session state for API keys
+# Initialize session state for API keys and refresh counter
 if 'alpaca_api_key' not in st.session_state:
     st.session_state['alpaca_api_key'] = ''
     st.session_state['alpaca_secret_key'] = ''
 if 'binance_api_key' not in st.session_state:
     st.session_state['binance_api_key'] = ''
     st.session_state['binance_secret_key'] = ''
+if 'refresh_count' not in st.session_state:
+    st.session_state['refresh_count'] = 0  # Initialize refresh counter
 
 # Display balances at the top of the page
 st.title("Vision Trading Dashboard")
@@ -49,15 +51,20 @@ dollar_amount = st.sidebar.number_input("Amount to Allocate ($)", value=100)
 
 # Refresh Button
 if st.sidebar.button("Refresh Positions"):
-    st.experimental_rerun()
+    st.session_state['refresh_count'] += 1  # Increment refresh counter to trigger re-run
 
-# Display balances function
+# Display balances function with PnL
 def display_balances():
     if exchange == "Alpaca":
         if st.session_state['alpaca_api_key'] and st.session_state['alpaca_secret_key']:
             # Initialize Alpaca client with user-provided API keys
             client = initialize_alpaca_client(st.session_state['alpaca_api_key'], st.session_state['alpaca_secret_key'])
-            balance_alpaca.metric("Alpaca Balance", f"${fetch_alpaca_balance(client):,.2f}")
+            balance, pnl = fetch_alpaca_balance(client)
+            if balance is not None and pnl is not None:
+                balance_alpaca.metric("Alpaca Balance", f"${balance:,.2f}")
+                st.metric("Alpaca PnL", f"${pnl:,.2f}")
+            else:
+                st.write("Error fetching Alpaca balance or PnL")
         else:
             st.write("No Alpaca API linked. Live trading features are disabled.")
     
@@ -68,6 +75,24 @@ def display_balances():
             balance_binance.metric("Binance Balance (USDT)", f"${fetch_binance_balance(client):,.2f}")
         else:
             st.write("No Binance API linked. Live trading features are disabled.")
+
+# Binance closing logic update
+def close_position_binance(client, symbol, size, side):
+    try:
+        if float(size) > 0:  # Long position
+            side = 'sell'
+        elif float(size) < 0:  # Short position
+            side = 'buy'
+
+        client.futures_create_order(
+            symbol=symbol,
+            side=side,
+            type='MARKET',
+            quantity=abs(float(size))  # Ensure we're using absolute size
+        )
+        st.success(f"Closed position for {symbol}")
+    except Exception as e:
+        st.error(f"Error closing position for {symbol}: {e}")
 
 # Alpaca trading options
 if exchange == "Alpaca":
@@ -113,6 +138,7 @@ if exchange == "Alpaca":
 
             for index, row in open_positions.iterrows():
                 if st.button(f"Close {row['Symbol']} position"):
+                    # Close specific position for Alpaca (with correct fractional handling)
                     close_position_alpaca(client, row['Symbol'])
 
             if st.button("Close All Alpaca Positions"):
@@ -177,7 +203,8 @@ elif exchange == "Binance Futures":
 
             for index, row in open_positions.iterrows():
                 if st.button(f"Close {row['Symbol']} position"):
-                    close_position_binance(client, row['Symbol'], abs(float(row['Size'])), 'sell' if float(row['Size']) > 0 else 'buy')
+                    side = 'sell' if float(row['Size']) > 0 else 'buy'  # Determine side based on position size
+                    close_position_binance(client, row['Symbol'], abs(float(row['Size'])), side)
 
             if st.button("Close All Binance Positions"):
                 close_all_positions_binance(client)
