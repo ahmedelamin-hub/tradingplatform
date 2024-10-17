@@ -2,26 +2,24 @@ import alpaca_trade_api as tradeapi
 import vectorbt as vbt
 import pandas as pd
 
-# Alpaca API setup
-APCA_API_BASE_URL = "https://paper-api.alpaca.markets"
-APCA_API_KEY_ID = "PK77AYZXRSTU37E27EK3"
-APCA_API_SECRET_KEY = "8DC7dFVtJwRNJacM6seYyvsrYinftFtpJgxv1Fa1"
-alpaca = tradeapi.REST(APCA_API_KEY_ID, APCA_API_SECRET_KEY, APCA_API_BASE_URL, api_version='v2')
+# Alpaca API setup (keys will be passed as arguments)
+def initialize_alpaca_client(api_key, api_secret):
+    return tradeapi.REST(api_key, api_secret, base_url="https://paper-api.alpaca.markets", api_version='v2')
 
 # Fetch Alpaca balance
-def fetch_alpaca_balance():
+def fetch_alpaca_balance(client):
     try:
-        account = alpaca.get_account()
+        account = client.get_account()
         return float(account.cash)
     except Exception as e:
         print(f"Error fetching Alpaca balance: {e}")
         return None
 
 # Alpaca live strategy
-def run_live_strategy_alpaca(symbol, action, dollar_amount):
+def run_live_strategy_alpaca(client, symbol, action, dollar_amount):
     try:
         side = 'buy' if action == 'buy' else 'sell'
-        order = alpaca.submit_order(
+        order = client.submit_order(
             symbol=symbol,
             qty=dollar_amount,  # Calculate this based on the price if needed
             side=side,
@@ -31,7 +29,7 @@ def run_live_strategy_alpaca(symbol, action, dollar_amount):
         print(f"{action.capitalize()} order placed for {symbol}")
 
         # Fetch current positions
-        return get_open_positions_alpaca()
+        return get_open_positions_alpaca(client)
 
     except Exception as e:
         print(f"Error executing Alpaca strategy: {e}")
@@ -54,9 +52,9 @@ def backtest_alpaca(symbol, start_date, end_date, short_ema_period, long_ema_per
         return None
 
 # Get open positions for Alpaca
-def get_open_positions_alpaca():
+def get_open_positions_alpaca(client):
     try:
-        positions = alpaca.list_positions()
+        positions = client.list_positions()
         open_positions = []
         for pos in positions:
             open_positions.append({
@@ -76,12 +74,12 @@ def get_open_positions_alpaca():
         return None
 
 # Close specific position in Alpaca
-def close_position_alpaca(symbol):
+def close_position_alpaca(client, symbol):
     try:
-        position = alpaca.get_position(symbol)
+        position = client.get_position(symbol)
         qty = position.qty
         side = 'sell' if int(qty) > 0 else 'buy'
-        alpaca.submit_order(
+        client.submit_order(
             symbol=symbol,
             qty=qty,
             side=side,
@@ -93,19 +91,19 @@ def close_position_alpaca(symbol):
         print(f"Error closing position for {symbol}: {e}")
 
 # Close all positions in Alpaca
-def close_all_positions_alpaca():
+def close_all_positions_alpaca(client):
     try:
-        positions = alpaca.list_positions()
+        positions = client.list_positions()
         for position in positions:
-            close_position_alpaca(position.symbol)
+            close_position_alpaca(client, position.symbol)
         print("All positions closed successfully.")
     except Exception as e:
         print(f"Error closing all positions: {e}")
 
 # Fetch pending orders from Alpaca
-def fetch_alpaca_pending_orders():
+def fetch_alpaca_pending_orders(client):
     try:
-        orders = alpaca.list_orders(status='open')
+        orders = client.list_orders(status='open')
         if orders:
             pending_orders = []
             for order in orders:
@@ -124,9 +122,9 @@ def fetch_alpaca_pending_orders():
         return None
 
 # Cancel pending order in Alpaca
-def cancel_order_alpaca(order_id):
+def cancel_order_alpaca(client, order_id):
     try:
-        alpaca.cancel_order(order_id)
+        client.cancel_order(order_id)
         print(f"Order {order_id} cancelled successfully.")
     except Exception as e:
         print(f"Error cancelling order {order_id}: {e}")

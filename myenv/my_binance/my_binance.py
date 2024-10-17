@@ -3,21 +3,23 @@ import pandas as pd
 from binance.enums import SIDE_BUY, SIDE_SELL, ORDER_TYPE_MARKET
 import streamlit as st
 import time
+import vectorbt as vbt
 
-# Binance Futures API setup
-BINANCE_API_KEY = "70d56a2c1a1f5fc16aa0077b1eb40dbb1f87d8451afb7483b9292f79c6363f18"
-BINANCE_API_SECRET = "aa050e6b4f9753234aa445fdf2fe87ec3fc8549ad217d61feef417411fe28959"
-client = Client(BINANCE_API_KEY, BINANCE_API_SECRET, testnet=True)
+# Binance Futures API setup (keys will be passed as arguments)
+def initialize_binance_client(api_key, api_secret):
+    client = Client(api_key, api_secret, testnet=True)
 
-# Synchronize with Binance server time
-try:
-    server_time = client.futures_time()
-    client.timestamp_offset = server_time['serverTime'] - int(time.time() * 1000)
-except Exception as e:
-    st.error(f"Error syncing with Binance server time: {e}")
+    # Synchronize with Binance server time
+    try:
+        server_time = client.futures_time()
+        client.timestamp_offset = server_time['serverTime'] - int(time.time() * 1000)
+    except Exception as e:
+        st.error(f"Error syncing with Binance server time: {e}")
+
+    return client
 
 # Fetch Binance balance
-def fetch_binance_balance():
+def fetch_binance_balance(client):
     try:
         balance = client.futures_account_balance()
         for asset in balance:
@@ -28,7 +30,7 @@ def fetch_binance_balance():
         return None
 
 # Binance live strategy
-def run_live_strategy_binance(symbol, margin, allocated_margin, side):
+def run_live_strategy_binance(client, symbol, margin, allocated_margin, side):
     try:
         # Change leverage
         client.futures_change_leverage(symbol=symbol, leverage=int(margin))
@@ -69,7 +71,7 @@ def run_live_strategy_binance(symbol, margin, allocated_margin, side):
         return None
 
 # Backtest Binance function
-def backtest_binance(symbol, start_date, end_date, short_ema_period, long_ema_period, allocated_margin):
+def backtest_binance(client, symbol, start_date, end_date, short_ema_period, long_ema_period, allocated_margin):
     try:
         # Fetch historical data (using Binance API)
         klines = client.futures_historical_klines(symbol, Client.KLINE_INTERVAL_1MINUTE, start_date, end_date)
@@ -106,7 +108,7 @@ def backtest_binance(symbol, start_date, end_date, short_ema_period, long_ema_pe
         return None
 
 # Get open positions
-def get_open_positions_binance():
+def get_open_positions_binance(client):
     try:
         positions = client.futures_position_information()
         open_positions = []
@@ -129,7 +131,7 @@ def get_open_positions_binance():
         return None
 
 # Close a specific Binance position
-def close_position_binance(symbol, size, side):
+def close_position_binance(client, symbol, size, side):
     try:
         client.futures_create_order(symbol=symbol, side=side, type=ORDER_TYPE_MARKET, quantity=size)
         st.success(f"Closed position for {symbol}")
@@ -137,15 +139,15 @@ def close_position_binance(symbol, size, side):
         st.error(f"Error closing position for {symbol}: {e}")
 
 # Close all Binance positions
-def close_all_positions_binance():
+def close_all_positions_binance(client):
     try:
-        positions = get_open_positions_binance()
+        positions = get_open_positions_binance(client)
         if positions is not None:
             for index, row in positions.iterrows():
                 symbol = row['Symbol']
                 size = abs(float(row['Size']))
                 side = SIDE_SELL if float(row['Size']) > 0 else SIDE_BUY
-                close_position_binance(symbol, size, side)
+                close_position_binance(client, symbol, size, side)
             st.success("All Binance positions closed!")
     except Exception as e:
         st.error(f"Error closing all positions: {e}")
